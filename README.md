@@ -2,7 +2,7 @@
 
 A small app that runs in a Docker container on a Jetson Orin Nano. It reads the video of a Tapo IP camera (RTSP), detects people, cats and dogs with YOLO (Ultralytics), and sends an alert with a photo to a Discord channel. It uses the NVIDIA GPU through CUDA.
 
-> **Status:** this setup was written for JetPack 7.2 (Jetson Linux R39.2, CUDA 13). It is a first version and may need small changes, for example the PyTorch index in the `Dockerfile`.
+Tested on a Jetson Orin Nano with JetPack 7.2 (Jetson Linux R39.2.1, CUDA 13.2).
 
 ## How it works
 
@@ -28,7 +28,7 @@ The container runs without a window. All results go to Discord and to the contai
 
 ## 2. Set up the Tapo camera
 
-1. In the Tapo app, open the camera: **Settings > Advanced Settings > Camera Account**. Create a username and a password. This account is **not** your Tapo cloud account.
+1. In the Tapo app, open the camera: **Settings > Advanced Settings > Camera Account**. Turn it on and create a username and a password. This account is **not** your Tapo cloud account. Use a password with only letters and numbers.
 2. Find the camera IP: Tapo app > **Settings > Device Info**. Give the camera a fixed IP in your router, so it does not change.
 3. The stream URL is:
 
@@ -37,7 +37,6 @@ The container runs without a window. All results go to Discord and to the contai
    ```
 
    `stream1` is high quality and `stream2` is lower quality (lighter and faster). If the password has special characters (`@`, `:`, `/`, `#`), replace them with their URL code (for example `@` is `%40`).
-4. Test the URL from the Jetson, before using Docker: `ffplay "rtsp://USER:PASSWORD@CAMERA_IP:554/stream1"` (or open it in VLC).
 
 ## 3. Create a Discord webhook
 
@@ -45,6 +44,13 @@ The container runs without a window. All results go to Discord and to the contai
 2. Go to **Server Settings > Integrations > Webhooks**.
 3. Click **New Webhook** and choose the channel.
 4. Click **Copy Webhook URL**.
+
+## 4. Get the code and set the secrets
+
+```bash
+git clone -b jetson-tapo https://github.com/bitsbuster/video-ai.git
+cd video-ai
+```
 
 Save the webhook and the camera URL in a `.env` file in the project folder. Docker Compose reads it automatically. Do not write them in the code:
 
@@ -58,46 +64,74 @@ chmod 600 .env
 
 `.env` is in `.gitignore`, so it is not uploaded to GitHub.
 
-> **Security:** anyone with the webhook URL can post in your channel, and anyone with the camera URL can see your camera. Never commit it to GitHub. If you share it by mistake, delete the webhook in Discord and create a new one.
+> **Security:** anyone with the webhook URL can post in your channel, and anyone with the camera URL can see your camera. Never commit them to GitHub. If you share the webhook by mistake, delete it in Discord and create a new one. If you share the camera password, change it in the Tapo app.
+>
+> When OpenCV cannot open a stream, it can print the full URL, including the password, in the logs. Hide the password before you paste logs anywhere.
 
-## 4. Build
+## 5. Build
 
 ```bash
-git clone -b jetson-orin-nano https://github.com/bitsbuster/video-ai.git
-cd video-ai
 docker compose build
 ```
 
-The first build downloads PyTorch and can take several minutes.
+The first build downloads PyTorch and can take several minutes. Later builds are fast, because Docker keeps the layers in its cache.
 
-## 5. Check that the GPU is detected
+## 6. Check the GPU and the camera
+
+Check that PyTorch sees the GPU:
 
 ```bash
 docker compose run --rm video-ai python3 -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
 ```
 
-- `True` and the GPU name: the GPU is available.
-- `False`: see the Troubleshooting section.
+It must print `True` and the GPU name. PyTorch may also print a warning that your GPU (compute capability 8.7) is not in its list of supported GPUs. In our tests the GPU worked anyway.
 
-## 6. Run the app
+Check that the Jetson reaches the camera:
 
 ```bash
-docker compose up
+ping -c 3 CAMERA_IP
+nc -vz CAMERA_IP 554
 ```
 
-Run it in the background with `docker compose up -d`. See the logs with `docker compose logs -f`. Stop it with `docker compose down`.
+`nc` must say `succeeded`. Then check that the video opens. This asks for the user and the password without saving them in the shell history, and hides the password in the output:
 
-The container restarts automatically if it stops (`restart: unless-stopped`).
+```bash
+read -rp "User: " U
+read -rsp "Password: " P; echo
+docker run --rm --network host \
+  -e CAMERA="rtsp://$U:$P@CAMERA_IP:554/stream1" \
+  -e OPENCV_FFMPEG_CAPTURE_OPTIONS="rtsp_transport;tcp" \
+  video-ai-video-ai \
+  python3 -c "import os,cv2; c=cv2.VideoCapture(os.environ['CAMERA'], cv2.CAP_FFMPEG); print('opened:', c.isOpened()); print('frame:', c.read()[0])" 2>&1 | sed "s/$P/XXXX/g"
+unset P
+```
 
-## 7. Settings
+It must print `opened: True` and `frame: True`. The image name is `<folder>-video-ai`. If your folder is `video-ai`, it is `video-ai-video-ai` (see `docker images`).
 
-Environment variables are set in `docker-compose.yml`:
+## 7. Run the app
+
+```bash
+docker compose up -d
+docker compose logs -f
+```
+
+The first start downloads `yolov8n.pt` (about 6 MB), so the container needs internet access. If you recreate the container, it downloads the file again.
+
+The logs show nothing until something is detected. Stand in front of the camera: you should see `person detected: person: 1` and receive the photo in Discord. About 3 seconds after you leave, the app sends `person left`.
+
+Stop it with `docker compose down`. The container restarts automatically if it stops (`restart: unless-stopped`).
+
+To check that the GPU is used, run `sudo tegrastats` while the app runs. The value `GR3D_FREQ` goes up when YOLO processes a frame.
+
+## 8. Settings
+
+Environment variables are set in `docker-compose.yml` and `.env`:
 
 | Name | Default | Meaning |
 |---|---|---|
 | `DISCORD_WEBHOOK` | none | URL of the Discord webhook. Required |
+| `CAMERA` | none | URL of the camera stream (`rtsp://...`). Required |
 | `DEVICE` | `cuda` | `cuda` is the NVIDIA GPU, `cpu` is the CPU |
-| `CAMERA` | none | Camera stream URL (`rtsp://...`). A number (`0`) opens a USB webcam, but the compose file does not pass `/dev/video0` |
 | `SHOW` | `0` in the container | `1` opens a window. It needs a display, so keep `0` |
 
 These values are at the top of `detect.py`:
@@ -108,33 +142,28 @@ These values are at the top of `detect.py`:
 | `CONFIDENCE` | `0.50` | Minimum confidence, from 0 to 1. Higher means fewer false alerts |
 | `EXIT_IN_SECONDS` | `3` | Seconds without detection before the "left" message |
 
-To detect other objects, change `CLASSES`. The IDs come from the COCO dataset. For example, `2` is car.
-
-## 8. Choose a model
-
-The app uses `yolov8n.pt`. It downloads the first time you run it, so the container needs internet access.
-
-| Model | Speed | Accuracy | Recommended use |
-|---|---|---|---|
-| `yolov8n.pt` | Very fast | Lower | Quick tests |
-| `yolov8s.pt` | Fast | Medium | Good balance |
-| `yolov8m.pt` | Medium | High | Better quality |
-
-To change the model, change the name in `YOLO("...")`.
+To detect other objects, change `CLASSES`. The IDs come from the COCO dataset. For example, `2` is car. After you change `detect.py`, run `docker compose up -d --build`.
 
 ## 9. Troubleshooting
 
-**`torch.cuda.is_available()` returns `False`, or a "no kernel image" error**
-- The PyTorch wheel may not include the Orin GPU (`sm_87`). Change the index with `docker compose build --build-arg TORCH_INDEX=<url>`, or use a PyTorch image from NVIDIA NGC as the base image.
+**`torch.cuda.is_available()` returns `False` and `device_count` is 0**
+- The container does not see the GPU. Check that `docker-compose.yml` has `runtime: nvidia` and the variables `NVIDIA_VISIBLE_DEVICES: all` and `NVIDIA_DRIVER_CAPABILITIES: all`. Without them, the container started from the `ubuntu` image does not get the GPU.
 - Check that the `nvidia` runtime exists: `docker info | grep -i runtime`.
 
-**`KeyError: 'DISCORD_WEBHOOK'`**
-- `DISCORD_WEBHOOK` is not set. Check that the `.env` file exists in the project folder (section 3) and recreate the container with `docker compose up -d --force-recreate`.
+**A "no kernel image" error**
+- The PyTorch wheel does not include the Orin GPU. Change the index with `docker compose build --build-arg TORCH_INDEX=<url>`, or use a PyTorch image from NVIDIA NGC as the base image.
+
+**The container restarts all the time**
+- Look at the reason: `docker compose logs --tail 40`.
+
+**`variable is not set` or `KeyError: 'DISCORD_WEBHOOK'`**
+- Check that the `.env` file is in the same folder as `docker-compose.yml` and has both lines. Then run `docker compose up -d --force-recreate`.
 
 **The camera does not open (`Cannot open the camera`)**
-- Check the camera account, the IP and the URL with `ffplay` from the Jetson (section 2).
-- Check that the Jetson and the camera are on the same network and that the camera is on.
-- If the video is choppy, use `stream2` (lower quality).
+- Run the checks of section 6: `ping`, `nc` and the video test. If `ping` or `nc` fail, the problem is the network: check that the Jetson and the camera are on the same network, and the camera IP.
+- `401 Unauthorized`: the user or the password is wrong. The user is case-sensitive, and **Camera Account** must be turned on in the Tapo app.
+- `can't create capture`, `400 Bad Request` or `CSeq ... expected, ... received`: the camera refuses the stream. Close the live view in the Tapo app and stop the container (`docker compose stop`). Then restart the camera (unplug it for 10 seconds), wait a minute and try once. Tapo cameras accept only a few RTSP connections at the same time, and many failed tests can keep them busy.
+- If the video is choppy or the CPU is high, use `stream2` (lower quality).
 
 **No message arrives in Discord**
 - Check the webhook URL.
@@ -142,33 +171,16 @@ To change the model, change the name in `YOLO("...")`.
 - Discord limits the number of messages. If the queue is full, the app prints `Queue is full, discarding message`.
 
 **Model download is slow or blocked**
-- Check your proxy or firewall. You can also download the `.pt` file by hand and put it in the project folder, then rebuild.
+- Check your proxy or firewall.
 
 ## 10. Project structure
 
 ```text
 video-ai/
-├── detect.py
-├── Dockerfile
-├── .gitignore
-├── docker-compose.yml
+├── detect.py            the app
+├── Dockerfile           image with PyTorch (CUDA) and Ultralytics
+├── docker-compose.yml   runs the app with the NVIDIA runtime
 ├── .dockerignore
+├── .gitignore           ignores .env
 └── README.md
 ```
-
-## 11. Faster inference with TensorRT
-
-After everything works, export the model on the Jetson (the engine depends on the hardware):
-
-```python
-from ultralytics import YOLO
-YOLO("yolov8n.pt").export(format="engine", half=True)
-```
-
-Then use `YOLO("yolov8n.engine")` in `detect.py`.
-
-## 12. Next steps
-
-- Use a video file instead of the camera: `cv2.VideoCapture("video.mp4")`.
-- Turn on object tracking: `model.track(frame, persist=True)`.
-- Add a cooldown, so the app does not send many alerts in a short time.
