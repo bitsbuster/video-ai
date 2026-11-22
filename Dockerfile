@@ -12,6 +12,6 @@ RUN pip3 install torch torchvision --index-url ${TORCH_INDEX}
 RUN pip3 install ultralytics requests
 
 WORKDIR /app
-COPY detect.py .
+COPY *.py ./
 ENV DEVICE=cuda SHOW=0 YOLO_CONFIG_DIR=/app/.ultralytics
 CMD ["python3", "detect.py"]
