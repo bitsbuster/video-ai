@@ -13,7 +13,10 @@ GATO = 15
 PERRO = 16
 CLASSES = [PERSONA, GATO, PERRO]
 DEVICE = os.environ.get("DEVICE", "cuda")  # cuda (Jetson) or cpu
-CAMERA = int(os.environ.get("CAMERA", "0"))
+# CAMERA is a device index (0) or a stream URL (rtsp://user:pass@ip:554/stream1)
+CAMERA = os.environ.get("CAMERA", "0")
+if CAMERA.isdigit():
+    CAMERA = int(CAMERA)
 SHOW = os.environ.get("SHOW", "1") == "1"  # 0 = headless (no window)
 CONFIDENCE = 0.50
 EXIT_IN_SECONDS = 3
@@ -60,6 +63,9 @@ def alert(texto, frame=None):
 
 model = YOLO('yolov8n.pt')
 cap = cv2.VideoCapture(CAMERA)
+if not cap.isOpened():
+    # Do not print CAMERA: a URL contains the camera password
+    raise SystemExit("Cannot open the camera. Check CAMERA, the IP and the camera account.")
 
 present = False
 last_seen = 0.0

@@ -3,12 +3,11 @@ services:
     build: .
     runtime: nvidia
     restart: unless-stopped
-    devices:
-      - /dev/video0:/dev/video0
     environment:
       DISCORD_WEBHOOK: ${DISCORD_WEBHOOK:?set DISCORD_WEBHOOK}
       DEVICE: cuda
       SHOW: "0"
-      CAMERA: "0"
+      CAMERA: ${CAMERA:?set CAMERA (rtsp URL) in .env}
+      OPENCV_FFMPEG_CAPTURE_OPTIONS: "rtsp_transport;tcp"
       NVIDIA_VISIBLE_DEVICES: all
       NVIDIA_DRIVER_CAPABILITIES: all
