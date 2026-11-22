@@ -65,6 +65,22 @@ def classify(xy, conf, box_ratio=None):
     return "unknown", drop
 
 
+def features(xy, conf, box_h):
+    """Debug text: torso and head position, as a fraction of the box height.
+
+    tx, ty: horizontal and vertical distance from shoulders to hips.
+    head: nose height above the hips (positive = nose is higher in the image).
+    """
+    shoulder = _mid(xy, conf, SHOULDERS)
+    hip = _mid(xy, conf, HIPS)
+    if shoulder is None or hip is None or box_h <= 0:
+        return "-"
+    tx = abs(hip[0] - shoulder[0]) / box_h
+    ty = abs(hip[1] - shoulder[1]) / box_h
+    head = "-" if conf[0] < KP_CONF else f"{(hip[1] - xy[0][1]) / box_h:.2f}"
+    return f"tx={tx:.2f} ty={ty:.2f} head={head}"
+
+
 def main():
     import cv2
     import requests
@@ -98,7 +114,7 @@ def main():
             break
         r = model(frame, imgsz=imgsz, conf=0.3, device=device, verbose=False)[0]
 
-        state, drop, seen, ratio = "none", None, "-", "-"
+        state, drop, seen, ratio, feat = "none", None, "-", "-", "-"
         if len(r.boxes) > 0:
             # use the biggest person in the image
             areas = (r.boxes.xywh[:, 2] * r.boxes.xywh[:, 3]).cpu().numpy()
@@ -109,6 +125,7 @@ def main():
             xy = r.keypoints.xy[i].cpu().numpy()
             conf = r.keypoints.conf[i].cpu().numpy()
             state, drop = classify(xy, conf, box_ratio)
+            feat = features(xy, conf, bh)
             # how many shoulders / hips / knees are visible (0-2 each)
             seen = "".join(f"{n}{sum(conf[j] >= KP_CONF for j in ids)}"
                            for n, ids in (("S", SHOULDERS), ("H", HIPS), ("K", KNEES)))
@@ -118,7 +135,7 @@ def main():
         if now - last_print >= 1:
             last_print = now
             value = "-" if drop is None else f"{drop:.2f}"
-            print(f"raw={state} thigh_drop={value} seen={seen} box_w/h={ratio} stable={current}", flush=True)
+            print(f"raw={state} thigh_drop={value} seen={seen} box_w/h={ratio} {feat} stable={current}", flush=True)
 
         top, votes = Counter(history).most_common(1)[0]
         if votes >= MIN_VOTES:
