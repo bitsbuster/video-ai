@@ -4,6 +4,8 @@ A small test app. It reads your webcam, detects people, cats and dogs with YOLO 
 
 It is made for a new Mac with Apple Silicon (M1, M2, M3, M4...). It uses the Apple GPU through MPS.
 
+It can also run in a Docker container on a Jetson Orin Nano with an NVIDIA GPU (CUDA). See section 12.
+
 ## How it works
 
 1. The app reads frames from the webcam.
@@ -117,7 +119,9 @@ These values are at the top of the script:
 | Name | Default | Meaning |
 |---|---|---|
 | `CLASSES` | person, cat, dog | Objects to detect (COCO class IDs 0, 15, 16) |
-| `DEVICE` | `mps` | Use the Apple GPU. Change to `cpu` if you have problems |
+| `DEVICE` | `mps` | Environment variable. `mps` is the Apple GPU, `cuda` is an NVIDIA GPU, `cpu` is the CPU |
+| `CAMERA` | `0` | Environment variable. Camera index |
+| `SHOW` | `1` | Environment variable. `0` runs without a window (needed in a container) |
 | `CONFIDENCE` | `0.50` | Minimum confidence, from 0 to 1. Higher means fewer false alerts |
 | `EXIT_IN_SECONDS` | `3` | Seconds without detection before the "left" message |
 | `DISCORD_WEBHOOK` | none | Environment variable with the webhook URL |
@@ -183,3 +187,62 @@ video-ai/
 - Turn on object tracking: `model.track(frame, persist=True)`.
 - Add a cooldown, so the app does not send many alerts in a short time.
 - Export the model to CoreML for better speed on Mac: `model.export(format="coreml")`.
+
+## 12. Run on a Jetson Orin Nano (Docker)
+
+The app can run in a container on a Jetson Orin Nano. It uses the NVIDIA GPU through CUDA and runs without a window.
+
+> **Status:** this setup was written for JetPack 7.2 (Jetson Linux R39.2, CUDA 13). It is a first version and may need small changes, for example the PyTorch index in the `Dockerfile`.
+
+### Requirements
+
+- Jetson Orin Nano with JetPack 7.2. Check it with `cat /etc/nv_tegra_release` (it must show `R39`).
+- Docker with the `nvidia` runtime. Check it with `docker info | grep -i runtime`.
+- A USB webcam **connected to the Jetson**. The container only sees cameras of the machine where it runs. Check it with `ls /dev/video*`.
+- A Discord webhook URL (see section 5).
+
+### Build and run
+
+```bash
+git clone -b jetson-orin-nano <your-repo-url>
+cd video-ai
+export DISCORD_WEBHOOK="https://discord.com/api/webhooks/..."
+docker compose build
+```
+
+Check that PyTorch sees the GPU:
+
+```bash
+docker compose run --rm video-ai python3 -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
+```
+
+Start the app:
+
+```bash
+docker compose up
+```
+
+Run it in the background with `docker compose up -d`. Stop it with `docker compose down`.
+
+### Jetson troubleshooting
+
+**`torch.cuda.is_available()` returns `False`, or "no kernel image" error**
+- The PyTorch wheel may not include the Orin GPU (`sm_87`). Change the index with `docker compose build --build-arg TORCH_INDEX=<url>`, or use a PyTorch image from NVIDIA NGC as the base image.
+
+**The camera does not open**
+- `/dev/video0` and `/dev/video1` are often the same camera (video and metadata). Set `CAMERA: "1"` in `docker-compose.yml`.
+- Use another device with `devices: - /dev/video1:/dev/video0` if needed.
+
+**Model download fails**
+- The container needs internet access the first time to download `yolov8n.pt`.
+
+### Faster inference with TensorRT
+
+After it works, export the model on the Jetson (the engine depends on the hardware):
+
+```python
+from ultralytics import YOLO
+YOLO("yolov8n.pt").export(format="engine", half=True)
+```
+
+Then use `YOLO("yolov8n.engine")` in `detect.py`.
