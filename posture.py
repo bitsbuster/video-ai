@@ -24,6 +24,7 @@ KNEES = (13, 14)
 KP_CONF = 0.3        # minimum confidence of a keypoint
 STAND_RATIO = 0.62   # knee this far below the hip (in torso lengths) -> standing
 SIT_RATIO = 0.50     # knee this close to the hip height -> sitting
+LYING_RATIO = 0.90   # box width / height at or above this -> lying
 WINDOW = 15          # frames used to smooth the state
 MIN_VOTES = 10       # frames of the window that must agree
 
@@ -33,12 +34,17 @@ def _mid(xy, conf, ids):
     return np.mean(pts, axis=0) if pts else None
 
 
-def classify(xy, conf):
+def classify(xy, conf, box_ratio=None):
     """Return (state, thigh_drop). state: standing, sitting, lying or unknown.
+
+    box_ratio is the width / height of the person box. A box wider than tall
+    means lying, and it does not depend on the keypoints.
 
     thigh_drop = how far the knees are below the hips, divided by the torso length.
     Standing is about 1.0 (the thigh is vertical). Sitting is close to 0 (horizontal).
     """
+    if box_ratio is not None and box_ratio >= LYING_RATIO:
+        return "lying", None
     shoulder = _mid(xy, conf, SHOULDERS)
     hip = _mid(xy, conf, HIPS)
     knee = _mid(xy, conf, KNEES)
@@ -98,10 +104,11 @@ def main():
             areas = (r.boxes.xywh[:, 2] * r.boxes.xywh[:, 3]).cpu().numpy()
             i = int(np.argmax(areas))
             bw, bh = r.boxes.xywh[i, 2:].tolist()
-            ratio = f"{bw / bh:.2f}"  # width / height of the box: > 1 means wider than tall
+            box_ratio = bw / bh  # width / height of the box
+            ratio = f"{box_ratio:.2f}"
             xy = r.keypoints.xy[i].cpu().numpy()
             conf = r.keypoints.conf[i].cpu().numpy()
-            state, drop = classify(xy, conf)
+            state, drop = classify(xy, conf, box_ratio)
             # how many shoulders / hips / knees are visible (0-2 each)
             seen = "".join(f"{n}{sum(conf[j] >= KP_CONF for j in ids)}"
                            for n, ids in (("S", SHOULDERS), ("H", HIPS), ("K", KNEES)))
