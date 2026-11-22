@@ -12,7 +12,9 @@ PERSONA = 0
 GATO = 15
 PERRO = 16
 CLASSES = [PERSONA, GATO, PERRO]
-DEVICE = "mps"
+DEVICE = os.environ.get("DEVICE", "mps")  # mps (Mac), cuda/0 (Jetson), cpu
+CAMERA = int(os.environ.get("CAMERA", "0"))
+SHOW = os.environ.get("SHOW", "1") == "1"  # 0 = headless (no window)
 CONFIDENCE = 0.50
 EXIT_IN_SECONDS = 3
 WEBHOOK_URL = os.environ["DISCORD_WEBHOOK"]
@@ -57,7 +59,7 @@ def alert(texto, frame=None):
 # --- Main program ---
 
 model = YOLO('yolov8n.pt')
-cap = cv2.VideoCapture(0)
+cap = cv2.VideoCapture(CAMERA)
 
 present = False
 last_seen = 0.0
@@ -86,10 +88,12 @@ while True:
         alert(f"person left: {texto}")    
 
     cv2.putText(out, texto, (10,30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,255), 2)
-    cv2.imshow("cam", out)
-    if cv2.waitKey(1)==27: # press esc to exit
-        break
+    if SHOW:
+        cv2.imshow("cam", out)
+        if cv2.waitKey(1)==27: # press esc to exit
+            break
 
 cap.release()
-cv2.destroyAllWindows()
+if SHOW:
+    cv2.destroyAllWindows()
                
