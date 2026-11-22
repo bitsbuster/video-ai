@@ -22,8 +22,8 @@ HIPS = (11, 12)
 KNEES = (13, 14)
 
 KP_CONF = 0.3        # minimum confidence of a keypoint
-STAND_RATIO = 0.70   # knee this far below the hip (in torso lengths) -> standing
-SIT_RATIO = 0.45     # knee this close to the hip height -> sitting
+STAND_RATIO = 0.62   # knee this far below the hip (in torso lengths) -> standing
+SIT_RATIO = 0.50     # knee this close to the hip height -> sitting
 WINDOW = 15          # frames used to smooth the state
 MIN_VOTES = 10       # frames of the window that must agree
 
@@ -92,21 +92,26 @@ def main():
             break
         r = model(frame, imgsz=imgsz, conf=0.3, device=device, verbose=False)[0]
 
-        state, drop = "none", None
+        state, drop, seen, ratio = "none", None, "-", "-"
         if len(r.boxes) > 0:
             # use the biggest person in the image
             areas = (r.boxes.xywh[:, 2] * r.boxes.xywh[:, 3]).cpu().numpy()
             i = int(np.argmax(areas))
+            bw, bh = r.boxes.xywh[i, 2:].tolist()
+            ratio = f"{bw / bh:.2f}"  # width / height of the box: > 1 means wider than tall
             xy = r.keypoints.xy[i].cpu().numpy()
             conf = r.keypoints.conf[i].cpu().numpy()
             state, drop = classify(xy, conf)
+            # how many shoulders / hips / knees are visible (0-2 each)
+            seen = "".join(f"{n}{sum(conf[j] >= KP_CONF for j in ids)}"
+                           for n, ids in (("S", SHOULDERS), ("H", HIPS), ("K", KNEES)))
         history.append(state)
 
         now = time.time()
         if now - last_print >= 1:
             last_print = now
             value = "-" if drop is None else f"{drop:.2f}"
-            print(f"raw={state} thigh_drop={value} stable={current}", flush=True)
+            print(f"raw={state} thigh_drop={value} seen={seen} box_w/h={ratio} stable={current}", flush=True)
 
         top, votes = Counter(history).most_common(1)[0]
         if votes >= MIN_VOTES:
