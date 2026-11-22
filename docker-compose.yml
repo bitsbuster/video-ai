@@ -10,3 +10,5 @@ services:
       DEVICE: cuda
       SHOW: "0"
       CAMERA: "0"
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: all
