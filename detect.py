@@ -12,7 +12,7 @@ PERSONA = 0
 GATO = 15
 PERRO = 16
 CLASSES = [PERSONA, GATO, PERRO]
-DEVICE = os.environ.get("DEVICE", "mps")  # mps (Mac), cuda/0 (Jetson), cpu
+DEVICE = os.environ.get("DEVICE", "cuda")  # cuda (Jetson) or cpu
 CAMERA = int(os.environ.get("CAMERA", "0"))
 SHOW = os.environ.get("SHOW", "1") == "1"  # 0 = headless (no window)
 CONFIDENCE = 0.50
